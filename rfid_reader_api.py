@@ -11,21 +11,12 @@ HEADERS = {
     "Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJyb2xlcyI6WyJST0xFX0FETUlOIl0sInVzZXJuYW1lIjoiZGlhcyIsInN1YiI6ImRpYXMiLCJpYXQiOjE3Mzk4MDAxNTAsImV4cCI6MTczOTg0MzM1MH0.w6uz2psWIISUasMterihPu_m8pCTJWo-InRrA88mAtk"
 }
 
-def send_to_api(tag_uid, manufacturer, model, xtid, security, file_open, serial_number):
+def send_to_api(tag_uid):
     """Send RFID data to API"""
 
-    # Ensure file_open is a proper boolean (True/False)
-    if isinstance(file_open, str):
-        file_open = file_open.lower() in ["true", "1"]  # Converts "true" -> True, "false" -> False
 
     payload = {
         "rfid_tag": tag_uid,
-        "manufacturer": manufacturer,
-        "model": model,
-        "xtid": xtid,
-        "security": security,
-        "file_open": file_open,  # ? Now always boolean
-        "serial_number": serial_number
     }
 
     try:
@@ -80,29 +71,28 @@ def read_loop(reader):
 
         print(f"[+] Tag detected: {tag_uid}")
 
-        # Read TID bank
-        tid_data = reader.read_TID_bank(raw=True)
-        if tid_data:
-            decoded_tid = reader.hex_str_to_bin_list(tid_data)
-            print(f"[DEBUG] Decoded TID Data: {decoded_tid}")
+        # # Read TID bank
+        # tid_data = reader.read_TID_bank(raw=True)
+        # if tid_data:
+        #     decoded_tid = reader.hex_str_to_bin_list(tid_data)
+        #     print(f"[DEBUG] Decoded TID Data: {decoded_tid}")
 
-            # Ensure the TID data has at least 7 elements
-            while len(decoded_tid) < 7:
-                decoded_tid.append("Unknown")
+        #     # Ensure the TID data has at least 7 elements
+        #     while len(decoded_tid) < 7:
+        #         decoded_tid.append("Unknown")
 
-            interpreted_tid = interpret_lower_48_TID(decoded_tid)
+        #     interpreted_tid = interpret_lower_48_TID(decoded_tid)
 
-            manufacturer = interpreted_tid[4] or "Unknown"
-            model = interpreted_tid[5] or "Unknown"
-            xtid = interpreted_tid[1]
-            security = interpreted_tid[2]
-            file_open = interpreted_tid[3]
-            serial_number = reader.extract_38_Bit_serial_number(decoded_tid)
+        #     manufacturer = interpreted_tid[4] or "Unknown"
+        #     model = interpreted_tid[5] or "Unknown"
+        #     xtid = interpreted_tid[1]
+        #     security = interpreted_tid[2]
+        #     file_open = interpreted_tid[3]
+        #     serial_number = reader.extract_38_Bit_serial_number(decoded_tid)
 
-            # Send data to API
-            send_to_api(tag_uid, manufacturer, model, xtid, security, file_open, serial_number)
+        # Send data to API
+        send_to_api(tag_uid)
 
-        time.sleep(1)
 
 if __name__ == "__main__":
     SERIAL_PORT = "/dev/ttyUSB0"

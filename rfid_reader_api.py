@@ -3,66 +3,106 @@ import time
 import serial
 from reader import Reader
 from tools import interpret_lower_48_TID
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # API settings
-API_URL = "http://192.168.0.151:8080/api/rfid"
-HEADERS = {
-    "Content-Type": "application/json",
-    "Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJyb2xlcyI6WyJST0xFX0FETUlOIl0sInVzZXJuYW1lIjoiZGlhcyIsInN1YiI6ImRpYXMiLCJpYXQiOjE3Mzk4MDAxNTAsImV4cCI6MTczOTg0MzM1MH0.w6uz2psWIISUasMterihPu_m8pCTJWo-InRrA88mAtk"
+BASE_URL = "http://192.168.0.151:8080/api"
+LOGIN_URL = f"{BASE_URL}/users/login"
+RFID_API_URL = f"{BASE_URL}/rfid"
+
+CREDENTIALS = {
+    "username": os.getenv("USERNAME"),
+    "password": os.getenv("PASSWORD")
 }
 
-def send_to_api(tag_uid):
-    """Send RFID data to API"""
+HEADERS = {
+    "Content-Type": "application/json",
+}
 
+token = None  # Global variable for storing the token
+
+
+def get_token():
+    """Request a new token and store it globally."""
+    global token
+    try:
+        print("\n[*] Requesting new JWT token...")
+        response = requests.post(LOGIN_URL, json=CREDENTIALS, headers=HEADERS, timeout=5)
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            token = token_data.get("token", "")
+            HEADERS["Authorization"] = f"Bearer {token}"
+            print("[+] Token received successfully.")
+        else:
+            print(f"[!] Failed to retrieve token: {response.status_code} - {response.text}")
+            token = None  # Reset token on failure
+    except requests.RequestException as e:
+        print(f"[!] Network error while retrieving token: {e}")
+        token = None
+
+
+def send_to_api(tag_uid):
+    """Send RFID tag data to the API. If the token is expired, refresh it."""
+    global token
+    if not token:
+        print("[!] No token found, requesting a new one...")
+        get_token()
+        if not token:
+            print("[ERROR] Cannot send data: authentication failed.")
+            return
 
     payload = {
         "rfid_tag": tag_uid,
+        "cashbox_id": os.getenv("CASHBOX_ID")
     }
 
     try:
         print(f"\n[*] Sending data to API: {payload}")
-        response = requests.post(API_URL, json=payload, headers=HEADERS, timeout=5)
+        response = requests.post(RFID_API_URL, json=payload, headers=HEADERS, timeout=5)
 
         if response.status_code == 200:
             print(f"[+] Data sent successfully: {tag_uid}")
         elif response.status_code == 401:
-            print("[!] API error: Unauthorized (401) - Check JWT Token")
+            print("[!] Unauthorized (401) - Refreshing token and retrying...")
+            get_token()  # Request a new token
+            send_to_api(tag_uid)  # Retry request
         else:
             print(f"[!] API error: {response.status_code} - {response.text}")
 
     except requests.RequestException as e:
         print(f"[!] Network error: {e}")
 
-def start_reader(reader):
-    """Initialize RFID reader (same as GUI)"""
-    print("Initializing RFID reader...")
 
-    # Reset serial buffers
+def start_reader(reader):
+    """Initialize RFID reader."""
+    print("Initializing RFID reader...")
     reader.clear_serial_buffers()
     print("Serial buffers cleared.")
 
-    # Set TX power level (default: 8dB)
-    print("Setting TX power level to 8dB...")
-    reader.set_tx_power_level(8)
+    print("Setting TX power level to 25dB...")
+    reader.set_tx_power_level(25)
 
-    # Start scanning
     print("Starting continuous reading mode...")
-    reader.ser.write(b'\nR2,0,6\r')  
+    reader.ser.write(b'\nR2,0,6\r')
     time.sleep(1)
 
+
 def read_loop(reader):
-    """Continuously read RFID tags and send data to API"""
+    """Main loop for reading RFID tags."""
     print("Starting RFID reader loop...")
 
     while True:
         print("\nRequesting tag data...")
-        reader.ser.write(b'\nR2,0,6\r')  
+        reader.ser.write(b'\nR2,0,6\r')
         time.sleep(0.2)
 
         tag_uid = reader.read()
         print(f"[DEBUG] Raw reader output: {tag_uid}")
 
-        # Ignore invalid responses
         if tag_uid in ["R", "NO TAG", ""]:
             print("[WARNING] Ignoring invalid response from reader.")
             reader.clear_serial_buffers()
@@ -71,26 +111,7 @@ def read_loop(reader):
 
         print(f"[+] Tag detected: {tag_uid}")
 
-        # # Read TID bank
-        # tid_data = reader.read_TID_bank(raw=True)
-        # if tid_data:
-        #     decoded_tid = reader.hex_str_to_bin_list(tid_data)
-        #     print(f"[DEBUG] Decoded TID Data: {decoded_tid}")
-
-        #     # Ensure the TID data has at least 7 elements
-        #     while len(decoded_tid) < 7:
-        #         decoded_tid.append("Unknown")
-
-        #     interpreted_tid = interpret_lower_48_TID(decoded_tid)
-
-        #     manufacturer = interpreted_tid[4] or "Unknown"
-        #     model = interpreted_tid[5] or "Unknown"
-        #     xtid = interpreted_tid[1]
-        #     security = interpreted_tid[2]
-        #     file_open = interpreted_tid[3]
-        #     serial_number = reader.extract_38_Bit_serial_number(decoded_tid)
-
-        # Send data to API
+        # Send tag to API
         send_to_api(tag_uid)
 
 
@@ -99,6 +120,8 @@ if __name__ == "__main__":
     BAUD_RATE = 38400
 
     try:
+        get_token()  # Get token before starting
+
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
         reader = Reader(ser)
 

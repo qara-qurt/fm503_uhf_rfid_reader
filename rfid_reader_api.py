@@ -2,7 +2,6 @@ import requests
 import time
 import serial
 from reader import Reader
-from tools import interpret_lower_48_TID
 import os
 from dotenv import load_dotenv
 
@@ -22,16 +21,14 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-token = None  # Global variable for storing the token
+token = None
 
 
 def get_token():
-    """Request a new token and store it globally."""
     global token
     try:
         print("\n[*] Requesting new JWT token...")
         response = requests.post(LOGIN_URL, json=CREDENTIALS, headers=HEADERS, timeout=5)
-        
         if response.status_code == 200:
             token_data = response.json()
             token = token_data.get("token", "")
@@ -39,17 +36,15 @@ def get_token():
             print("[+] Token received successfully.")
         else:
             print(f"[!] Failed to retrieve token: {response.status_code} - {response.text}")
-            token = None  # Reset token on failure
+            token = None
     except requests.RequestException as e:
         print(f"[!] Network error while retrieving token: {e}")
         token = None
 
 
 def send_to_api(tag_uid):
-    """Send RFID tag data to the API. If the token is expired, refresh it."""
     global token
     if not token:
-        print("[!] No token found, requesting a new one...")
         get_token()
         if not token:
             print("[ERROR] Cannot send data: authentication failed.")
@@ -68,8 +63,8 @@ def send_to_api(tag_uid):
             print(f"[+] Data sent successfully: {tag_uid}")
         elif response.status_code == 401:
             print("[!] Unauthorized (401) - Refreshing token and retrying...")
-            get_token()  # Request a new token
-            send_to_api(tag_uid)  # Retry request
+            get_token()
+            send_to_api(tag_uid)
         else:
             print(f"[!] API error: {response.status_code} - {response.text}")
 
@@ -78,41 +73,44 @@ def send_to_api(tag_uid):
 
 
 def start_reader(reader):
-    """Initialize RFID reader."""
     print("Initializing RFID reader...")
     reader.clear_serial_buffers()
     print("Serial buffers cleared.")
 
     print("Setting TX power level to 25dB...")
-    reader.set_tx_power_level(25)
-
-    print("Starting continuous reading mode...")
-    reader.ser.write(b'\nR2,0,6\r')
-    time.sleep(1)
+    success = reader.set_tx_power_level(25)
+    if not success:
+        print("[!] Failed to set TX power.")
+    time.sleep(0.5)
 
 
 def read_loop(reader):
-    """Main loop for reading RFID tags."""
     print("Starting RFID reader loop...")
+    detected_tags = set()
 
     while True:
-        print("\nRequesting tag data...")
-        reader.ser.write(b'\nR2,0,6\r')
-        time.sleep(0.2)
+        try:
+            epc_data = reader.multi_tag_EPC_read()
+            if not epc_data:
+                print("[INFO] No tags detected.")
+                continue
 
-        tag_uid = reader.read()
-        print(f"[DEBUG] Raw reader output: {tag_uid}")
+            current_tags = set()
 
-        if tag_uid in ["R", "NO TAG", ""]:
-            print("[WARNING] Ignoring invalid response from reader.")
-            reader.clear_serial_buffers()
-            time.sleep(0.5)
-            continue  
+            for entry in epc_data:
+                binary_epc = entry[0]  # list of ints
+                tag_uid = hex(int(reader.convert_to_raw(binary_epc), 2)).upper().replace('X', 'x')
 
-        print(f"[+] Tag detected: {tag_uid}")
+                current_tags.add(tag_uid)
 
-        # Send tag to API
-        send_to_api(tag_uid)
+                if tag_uid not in detected_tags:
+                    print(f"[+] New tag detected: {tag_uid}")
+                    send_to_api(tag_uid)
+
+            detected_tags = current_tags
+
+        except Exception as e:
+            print(f"[ERROR] Exception during reading: {e}")
 
 
 if __name__ == "__main__":
@@ -120,7 +118,7 @@ if __name__ == "__main__":
     BAUD_RATE = 38400
 
     try:
-        get_token()  # Get token before starting
+        get_token()
 
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
         reader = Reader(ser)

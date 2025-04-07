@@ -86,7 +86,8 @@ def start_reader(reader):
 
 def read_loop(reader):
     print("Starting RFID reader loop...")
-    detected_tags = set()
+    tag_last_sent = {}  # UID -> last sent timestamp
+    SEND_INTERVAL = 2   # seconds
 
     while True:
         try:
@@ -95,22 +96,23 @@ def read_loop(reader):
                 print("[INFO] No tags detected.")
                 continue
 
-            current_tags = set()
-
             for entry in epc_data:
-                binary_epc = entry[0]  # list of ints
+                binary_epc = entry[0]
                 tag_uid = hex(int(reader.convert_to_raw(binary_epc), 2)).upper().replace('X', 'x')
 
-                current_tags.add(tag_uid)
+                now = time.time()
+                last_sent = tag_last_sent.get(tag_uid, 0)
 
-                if tag_uid not in detected_tags:
-                    print(f"[+] New tag detected: {tag_uid}")
+                if now - last_sent >= SEND_INTERVAL:
+                    print(f"[+] Tag ready to send: {tag_uid}")
                     send_to_api(tag_uid)
-
-            detected_tags = current_tags
+                    tag_last_sent[tag_uid] = now
+                else:
+                    print(f"[SKIP] {tag_uid} already sent recently ({round(now - last_sent, 2)}s ago)")
 
         except Exception as e:
             print(f"[ERROR] Exception during reading: {e}")
+
 
 
 if __name__ == "__main__":
